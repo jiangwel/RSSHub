@@ -4,12 +4,16 @@ import pMap from 'p-map';
 import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import puppeteer from '@/utils/puppeteer';
 
 export const route: Route = {
     path: '/news',
     categories: ['programming'],
     example: '/anthropic/news',
     parameters: {},
+    features: {
+        requirePuppeteer: true,
+    },
     radar: [
         {
             source: ['www.anthropic.com/news', 'www.anthropic.com'],
@@ -23,25 +27,48 @@ export const route: Route = {
 
 async function handler(ctx) {
     const link = 'https://www.anthropic.com/news';
-    const response = await ofetch(link);
-    const $ = load(response);
+
+    const browser = await puppeteer();
+    const page = await browser.newPage();
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+        request.resourceType() === 'document' || request.resourceType() === 'script' || request.resourceType() === 'fetch' || request.resourceType() === 'xhr' ? request.continue() : request.abort();
+    });
+
+    await page.goto(link, {
+        waitUntil: 'networkidle2',
+    });
+
+    try {
+        await page.waitForSelector('a[href^="/news/"]');
+    } catch {
+        // Ignore timeout if no news found, let cheerio handle empty list
+    }
+
+    const content = await page.content();
+    await page.close();
+    await browser.close();
+
+    const $ = load(content);
     const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
 
-    const list: DataItem[] = $('.contentFadeUp a')
+    const list: DataItem[] = $('a[href^="/news/"]')
         .toArray()
-        .slice(0, limit)
         .map((el) => {
             const $el = $(el);
-            const title = $el.find('h3').text().trim();
+            const title = $el.find('h2, h3, span[class*="title"]').text().trim();
             const href = $el.attr('href') ?? '';
-            const pubDate = $el.find('p.detail-m.agate').text().trim() || $el.find('div[class^="PostList_post-date__"]').text().trim(); // legacy selector used roughly before Jan 2025
+            const pubDate = $el.find('time').text().trim();
             const fullLink = href.startsWith('http') ? href : `https://www.anthropic.com${href}`;
             return {
                 title,
                 link: fullLink,
                 pubDate,
             };
-        });
+        })
+        .filter((item) => item.title)
+        .filter((item, index, self) => index === self.findIndex((t) => t.link === item.link))
+        .slice(0, limit);
 
     const out = await pMap(
         list,
@@ -52,24 +79,19 @@ async function handler(ctx) {
 
                 const content = $('#main-content');
 
-                // Remove meaningless information (heading, sidebar, quote carousel, footer and codeblock controls)
-                $(`
-                    [class^="PostDetail_post-heading"],
-                    [class^="ArticleDetail_sidebar-container"],
-                    [class^="QuoteCarousel_carousel-controls"],
-                    [class^="PostDetail_b-social-share"],
-                    [class^="LandingPageSection_root"],
-                    [class^="CodeBlock_controls"]
-                `).remove();
+                // Remove meaningless information
+                content.find('[class*="hero"], [class*="sidebar"], [class*="controls"], [class*="social-share"]').remove();
 
                 content.find('img').each((_, e) => {
                     const $e = $(e);
                     $e.removeAttr('style srcset');
                     const src = $e.attr('src');
-                    const params = new URLSearchParams(src);
-                    const newSrc = params.get('/_next/image?url');
-                    if (newSrc) {
-                        $e.attr('src', newSrc);
+                    if (src) {
+                        const params = new URLSearchParams(src.split('?')[1]);
+                        const newSrc = params.get('/_next/image?url');
+                        if (newSrc) {
+                            $e.attr('src', newSrc);
+                        }
                     }
                 });
 
