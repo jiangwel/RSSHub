@@ -13,7 +13,7 @@ RUN \
         echo 'use npm mirror' && \
         npm config set registry https://registry.npmmirror.com && \
         yarn config set registry https://registry.npmmirror.com && \
-        pnpm config set registry https://registry.npmmirror.com ; \
+        pnpm config set registry https://registry.npmjs.org ; \
     fi;
 
 COPY ./tsconfig.json /app/
@@ -55,13 +55,13 @@ COPY --from=dep-version-parser /ver/* /minifier/
 ARG USE_CHINA_NPM_REGISTRY=0
 RUN \
     set -ex && \
+    npm install -g corepack@latest && \
+    corepack enable pnpm && \
     if [ "$USE_CHINA_NPM_REGISTRY" = 1 ]; then \
         npm config set registry https://registry.npmmirror.com && \
         yarn config set registry https://registry.npmmirror.com && \
-        pnpm config set registry https://registry.npmmirror.com ; \
+        pnpm config set registry https://registry.npmjs.org ; \
     fi; \
-    npm install -g corepack@latest && \
-    corepack enable pnpm && \
     pnpm add @vercel/nft@$(cat .nft_version) fs-extra@$(cat .fs_extra_version) --save-prod
 
 COPY . /app
@@ -99,14 +99,14 @@ ARG PUPPETEER_SKIP_DOWNLOAD=1
 RUN \
     set -ex ; \
     if [ "$PUPPETEER_SKIP_DOWNLOAD" = 0 ] && [ "$TARGETPLATFORM" = 'linux/amd64' ]; then \
+        corepack enable pnpm && \
         if [ "$USE_CHINA_NPM_REGISTRY" = 1 ]; then \
             npm config set registry https://registry.npmmirror.com && \
             yarn config set registry https://registry.npmmirror.com && \
-            pnpm config set registry https://registry.npmmirror.com ; \
+            pnpm config set registry https://registry.npmjs.org ; \
         fi; \
         echo 'Downloading Chromium...' && \
         unset PUPPETEER_SKIP_DOWNLOAD && \
-        corepack enable pnpm && \
         pnpm --allow-build=rebrowser-puppeteer add rebrowser-puppeteer@$(cat /app/.puppeteer_version) --save-prod && \
         pnpm rb && \
         pnpx rebrowser-puppeteer browsers install chrome ; \
@@ -125,9 +125,15 @@ ENV TZ=Asia/Shanghai
 
 WORKDIR /app
 
+ARG COMMIT_SHA
+ARG GIT_DATE
+ENV VERCEL_GIT_COMMIT_SHA=$COMMIT_SHA
+ENV GIT_DATE=$GIT_DATE
+
 # install deps first to avoid cache miss or disturbing buildkit to build concurrently
 ARG TARGETPLATFORM
 ARG PUPPETEER_SKIP_DOWNLOAD=1
+ARG USE_CHINA_NPM_REGISTRY=0
 # https://pptr.dev/troubleshooting#chrome-headless-doesnt-launch-on-unix
 # https://github.com/puppeteer/puppeteer/issues/7822
 # https://www.debian.org/releases/bookworm/amd64/release-notes/ch-information.en.html#noteworthy-obsolete-packages
@@ -136,9 +142,13 @@ ARG PUPPETEER_SKIP_DOWNLOAD=1
 # Dependencies of puppeteer-real-browser: xvfb, procps
 RUN \
     set -ex && \
+    if [ "$USE_CHINA_NPM_REGISTRY" = 1 ]; then \
+        sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources; \
+        sed -i 's/security.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources; \
+    fi; \
     apt-get update && \
     apt-get install -yq --no-install-recommends \
-        dumb-init git curl \
+        dumb-init curl \
     ; \
     if [ "$PUPPETEER_SKIP_DOWNLOAD" = 0 ]; then \
         if [ "$TARGETPLATFORM" = 'linux/amd64' ]; then \

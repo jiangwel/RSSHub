@@ -38,11 +38,17 @@ tsdown-vercel.config.ts
 vitest.config.ts
 vercel.json
 
-# git but keep the git commit hash
-.git/logs
-.git/index
-.git/info
-.git/hooks
+# git
+.git
 
 # rsshub auxiliary files
 lib/routes/**/radar.js
+
+# build artifacts
+rsshub.tar
+rsshub-slim.tar
+rsshub-slim.tar.gz
+*.tar
+*.tar.gz
+dist
+app-minimal
